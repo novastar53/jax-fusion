@@ -3,9 +3,11 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 import flax.nnx as nnx
+import numpy as np
 
 import optax
 
+from typing import Optional
 from jax_fusion.datasets.fashion_mnist import make_dataloader, visualize_batch, FASHION_LABELS
 
 train_it = make_dataloader("train")
@@ -46,11 +48,23 @@ class VAE(nnx.Module):
         y = y.transpose(0, 3, 1, 2)
         return y, key
 
-rngs = nnx.Rngs(default=0)
-m = VAE(Config(), rngs)    
 
-tx = optax.adam(1e-2)
-optimizer = nnx.Optimizer(m, tx, wrt=nnx.Param)
+# ---------------------------
+# VAE-specific generation
+# ---------------------------
+def decode_z(vae: VAE, z):
+    """Decode latent batch z (numpy/jax array) to images using VAE decoder layers.
+
+    Returns images in CHW format matching the forward output.
+    """
+    x = vae.linear2(z)
+    if hasattr(x, 'reshape'):
+        B = x.shape[0]
+        x = x.reshape(B, 7, 7, 64)
+    x = vae.deconv1(x)
+    y = vae.deconv2(x)
+    y = y.transpose(0, 3, 1, 2)
+    return y
 
 
 def loss_fn(m, x, key):
@@ -65,9 +79,30 @@ def step_fn(m, x, key):
     optimizer.update(m, grads)
     return loss, y, key
 
-key = jax.random.key(42)
-for i, (x, labels) in enumerate(train_it):
-    loss, y, key = step_fn(m, x, key)
-    print(i, loss)
 
-visualize_batch(y, labels, FASHION_LABELS)
+if __name__ == "__main__":
+    rngs = nnx.Rngs(default=0)
+    m = VAE(Config(), rngs)
+
+    tx = optax.adam(1e-2)
+    optimizer = nnx.Optimizer(m, tx, wrt=nnx.Param)
+
+    key = jax.random.PRNGKey(42)
+    for i, (x, labels) in enumerate(train_it):
+        loss, y, key = step_fn(m, x, key)
+        print(i, loss)
+
+    #visualize_batch(y, labels, FASHION_LABELS)
+    # use the generic plot helper from generate.py
+    from jax_fusion.generate import plot_samples as generic_plot
+
+    def decoder_wrapper(_params_unused, z, _rng=None):
+        # `z` may be a numpy or jax array; decode_z returns CHW images
+        imgs = decode_z(m, z)
+        # convert to HWC if needed
+        arr = np.array(imgs)
+        if arr.ndim == 4 and arr.shape[1] in (1, 3):
+            arr = arr.transpose(0, 2, 3, 1)
+        return arr
+
+    generic_plot(jax.random.PRNGKey(1337), None, decoder_wrapper, n_row=4, latent_dim=8)
