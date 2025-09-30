@@ -8,25 +8,27 @@ import numpy as np
 import optax
 
 from typing import Optional
-from jax_fusion.datasets.fashion_mnist import make_dataloader, visualize_batch, FASHION_LABELS
+#from jax_fusion.datasets.fashion_mnist import make_dataloader, visualize_batch, FASHION_LABELS
+from jax_fusion.datasets.celeb_a import DataConfig, make_dataloader, visualize_batch
 
 train_it = make_dataloader("train")
-test_it = make_dataloader("test")
 
 @dataclass
 class Config:
-    hidden_size: int = 8
+    hidden_size: int = 16
 
 
 class VAE(nnx.Module):
     def __init__(self, config: Config, rngs: nnx.Rngs):
         self.config = config
-        self.conv1 = nnx.Conv(in_features=1, out_features=32, kernel_size=(3, 3), strides=(2, 2), padding='SAME', rngs=rngs)
-        self.conv2 = nnx.Conv(in_features=32, out_features=64, kernel_size=(3, 3), strides=(2, 2), padding='SAME', rngs=rngs)
+        self.conv1 = nnx.Conv(in_features=3, out_features=16, kernel_size=(3, 3), strides=(2, 2), padding='SAME', rngs=rngs)
+        self.conv2 = nnx.Conv(in_features=16, out_features=32, kernel_size=(3, 3), strides=(2, 2), padding='SAME', rngs=rngs)
+        self.conv3 = nnx.Conv(in_features=32, out_features=64, kernel_size=(3, 3), strides=(1, 1), padding='SAME', rngs=rngs)
         self.linear1 = nnx.Linear(7*7*64, 2 * config.hidden_size, rngs=rngs)
         self.linear2 = nnx.Linear(config.hidden_size, 7*7*64, rngs=rngs)
         self.deconv1 = nnx.ConvTranspose(in_features=64, out_features=32, kernel_size=(3, 3), strides=(2, 2), padding='SAME', rngs=rngs)
-        self.deconv2 = nnx.ConvTranspose(in_features=32, out_features=1, kernel_size=(3, 3), strides=(2, 2), padding='SAME', rngs=rngs)
+        self.deconv2 = nnx.ConvTranspose(in_features=32, out_features=16, kernel_size=(3, 3), strides=(2, 2), padding='SAME', rngs=rngs)
+        self.deconv3 = nnx.ConvTranspose(in_features=16, out_features=3, kernel_size=(3, 3), strides=(1, 1), padding='SAME', rngs=rngs)
     
 
     def __call__(self, batch, key: jnp.ndarray = None):
@@ -34,16 +36,18 @@ class VAE(nnx.Module):
         batch = batch.transpose(0, 2, 3, 1)
         x = self.conv1(batch)
         x = self.conv2(x)
+        x = self.conv3(x)
         x = x.reshape(B, -1)
         x = self.linear1(x)
         mu, log_var = jnp.split(x, 2, axis=1)
         key, subkey = jax.random.split(key)
         epsilon = jax.random.normal(subkey, log_var.shape)
-        l = mu + log_var * epsilon
+        l = mu + jnp.sqrt(jnp.exp(log_var)) * epsilon
         x = self.linear2(l)
-        x = x.reshape(B, 7, 7, 64)
+        x = x.reshape(B, 7, 7, 64) 
         x = self.deconv1(x)
-        y = self.deconv2(x)
+        x = self.deconv2(x)
+        y = self.deconv3(x)
         assert(batch.shape == y.shape)
         y = y.transpose(0, 3, 1, 2)
         return y, mu, log_var, key
@@ -73,36 +77,37 @@ def decode_z(vae: VAE, z):
         B = x.shape[0]
         x = x.reshape(B, 7, 7, 64)
     x = vae.deconv1(x)
-    y = vae.deconv2(x)
+    x = vae.deconv2(x)
+    y = vae.deconv3(x)
     y = y.transpose(0, 3, 1, 2)
     return y
 
 
-def loss_fn(m, x, key):
-    y, mu, log_var, key = m(x, key)
-    assert(y.shape == x.shape)
-    loss =  jnp.sum((y - x) ** 2) + 0.5 * jnp.sum(jnp.exp(log_var) + mu ** 2) 
-    loss /= y.shape[0]
-    return loss, (y, key)
 
-
+@nnx.jit
 def step_fn(m, x, key):
-    (loss, (y, key)), grads = nnx.value_and_grad(loss_fn, has_aux=True)(m, x, key)
+    def loss_fn(m, x, key):
+        y, mu, log_var, key = m(x, key)
+        assert(y.shape == x.shape)
+        loss =  jnp.sum((y - x) ** 2) + 0.5 * jnp.sum(jnp.exp(log_var) + mu ** 2 - log_var) 
+        loss /= y.shape[0]
+        return loss, (y, key)
+
+    return nnx.value_and_grad(loss_fn, has_aux=True)(m, x, key)
+
+
+rngs = nnx.Rngs(default=0)
+config = Config()
+m = VAE(config, rngs)
+
+tx = optax.adam(1e-3)
+optimizer = nnx.Optimizer(m, tx, wrt=nnx.Param)
+
+key = jax.random.PRNGKey(42)
+for i, (x, labels) in enumerate(train_it):
+    (loss, (y, key)), grads = step_fn(m, x, key)
     optimizer.update(m, grads)
-    return loss, y, key
+    print(i, loss)
 
-
-if __name__ == "__main__":
-    rngs = nnx.Rngs(default=0)
-    m = VAE(Config(), rngs)
-
-    tx = optax.adam(1e-3)
-    optimizer = nnx.Optimizer(m, tx, wrt=nnx.Param)
-
-    key = jax.random.PRNGKey(42)
-    for i, (x, labels) in enumerate(train_it):
-        loss, y, key = step_fn(m, x, key)
-        print(i, loss)
-
-    from jax_fusion.generate import plot_samples as generic_plot
-    generic_plot(jax.random.PRNGKey(2000), None, decoder_wrapper, n_row=4, latent_dim=8)
+from jax_fusion.generate import plot_samples as generic_plot
+generic_plot(jax.random.PRNGKey(2000), None, decoder_wrapper, n_row=4, latent_dim=config.hidden_size)
