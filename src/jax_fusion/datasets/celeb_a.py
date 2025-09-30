@@ -35,7 +35,7 @@ class DataConfig:
     # If set, limit the dataset to the first `sample_size` examples (useful for demos)
     sample_size: Optional[int] = None
     # Target image size (H, W)
-    image_size: Tuple[int, int] = (28, 28)
+    image_size: Tuple[int, int] = (56, 56)
 
 
 def _load_from_tfds(sample_size: Optional[int] = None):

@@ -24,8 +24,8 @@ class VAE(nnx.Module):
         self.conv1 = nnx.Conv(in_features=3, out_features=16, kernel_size=(3, 3), strides=(2, 2), padding='SAME', rngs=rngs)
         self.conv2 = nnx.Conv(in_features=16, out_features=32, kernel_size=(3, 3), strides=(2, 2), padding='SAME', rngs=rngs)
         self.conv3 = nnx.Conv(in_features=32, out_features=64, kernel_size=(3, 3), strides=(1, 1), padding='SAME', rngs=rngs)
-        self.linear1 = nnx.Linear(7*7*64, 2 * config.hidden_size, rngs=rngs)
-        self.linear2 = nnx.Linear(config.hidden_size, 7*7*64, rngs=rngs)
+        self.linear1 = nnx.Linear(14*14*64, 2 * config.hidden_size, rngs=rngs)
+        self.linear2 = nnx.Linear(config.hidden_size, 14*14*64, rngs=rngs)
         self.deconv1 = nnx.ConvTranspose(in_features=64, out_features=32, kernel_size=(3, 3), strides=(2, 2), padding='SAME', rngs=rngs)
         self.deconv2 = nnx.ConvTranspose(in_features=32, out_features=16, kernel_size=(3, 3), strides=(2, 2), padding='SAME', rngs=rngs)
         self.deconv3 = nnx.ConvTranspose(in_features=16, out_features=3, kernel_size=(3, 3), strides=(1, 1), padding='SAME', rngs=rngs)
@@ -44,7 +44,7 @@ class VAE(nnx.Module):
         epsilon = jax.random.normal(subkey, log_var.shape)
         l = mu + jnp.sqrt(jnp.exp(log_var)) * epsilon
         x = self.linear2(l)
-        x = x.reshape(B, 7, 7, 64) 
+        x = x.reshape(B, 14, 14, 64) 
         x = self.deconv1(x)
         x = self.deconv2(x)
         y = self.deconv3(x)
@@ -75,7 +75,7 @@ def decode_z(vae: VAE, z):
     x = vae.linear2(z)
     if hasattr(x, 'reshape'):
         B = x.shape[0]
-        x = x.reshape(B, 7, 7, 64)
+        x = x.reshape(B, 14, 14, 64)
     x = vae.deconv1(x)
     x = vae.deconv2(x)
     y = vae.deconv3(x)
