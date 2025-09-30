@@ -46,12 +46,23 @@ class VAE(nnx.Module):
         y = self.deconv2(x)
         assert(batch.shape == y.shape)
         y = y.transpose(0, 3, 1, 2)
-        return y, key
+        return y, mu, log_var, key
 
 
 # ---------------------------
 # VAE-specific generation
 # ---------------------------
+
+def decoder_wrapper(_params_unused, z, _rng=None):
+    # `z` may be a numpy or jax array; decode_z returns CHW images
+    imgs = decode_z(m, z)
+    # convert to HWC if needed
+    arr = np.array(imgs)
+    if arr.ndim == 4 and arr.shape[1] in (1, 3):
+        arr = arr.transpose(0, 2, 3, 1)
+    return arr
+
+
 def decode_z(vae: VAE, z):
     """Decode latent batch z (numpy/jax array) to images using VAE decoder layers.
 
@@ -68,9 +79,10 @@ def decode_z(vae: VAE, z):
 
 
 def loss_fn(m, x, key):
-    y, key = m(x, key)
+    y, mu, log_var, key = m(x, key)
     assert(y.shape == x.shape)
-    loss =  jnp.sum((y - x) ** 2) / y.shape[0]
+    loss =  jnp.sum((y - x) ** 2) + 0.5 * jnp.sum(jnp.exp(log_var) + mu ** 2) 
+    loss /= y.shape[0]
     return loss, (y, key)
 
 
@@ -84,7 +96,7 @@ if __name__ == "__main__":
     rngs = nnx.Rngs(default=0)
     m = VAE(Config(), rngs)
 
-    tx = optax.adam(1e-2)
+    tx = optax.adam(1e-3)
     optimizer = nnx.Optimizer(m, tx, wrt=nnx.Param)
 
     key = jax.random.PRNGKey(42)
@@ -92,17 +104,5 @@ if __name__ == "__main__":
         loss, y, key = step_fn(m, x, key)
         print(i, loss)
 
-    #visualize_batch(y, labels, FASHION_LABELS)
-    # use the generic plot helper from generate.py
     from jax_fusion.generate import plot_samples as generic_plot
-
-    def decoder_wrapper(_params_unused, z, _rng=None):
-        # `z` may be a numpy or jax array; decode_z returns CHW images
-        imgs = decode_z(m, z)
-        # convert to HWC if needed
-        arr = np.array(imgs)
-        if arr.ndim == 4 and arr.shape[1] in (1, 3):
-            arr = arr.transpose(0, 2, 3, 1)
-        return arr
-
-    generic_plot(jax.random.PRNGKey(1337), None, decoder_wrapper, n_row=4, latent_dim=8)
+    generic_plot(jax.random.PRNGKey(2000), None, decoder_wrapper, n_row=4, latent_dim=8)
