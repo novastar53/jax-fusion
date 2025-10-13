@@ -1,9 +1,15 @@
+from dataclasses import dataclass
+
 import jax
 import jax.numpy as jnp
 import flax.nnx as nnx
 
-class UNet:
-    def __init__(self):
+@dataclass
+class Config:
+    init_dim: int = 0
+
+class UNet(nnx.Module):
+    def __init__(self, config):
         self.ups = []
         self.downs = []
     
