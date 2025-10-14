@@ -109,14 +109,17 @@ def _prepare_image(arr: np.ndarray, image_size: Tuple[int, int]) -> np.ndarray:
 
 
 def _prepare_mask(arr: np.ndarray, image_size: Tuple[int, int]) -> np.ndarray:
-    """Convert mask array to int32 HW at the target size."""
+    """Convert mask array to zero-based int32 HW at the target size."""
     np_arr = np.array(arr)
     if np_arr.ndim == 3 and np_arr.shape[-1] == 1:
         np_arr = np_arr.squeeze(-1)
     if np_arr.dtype != np.uint8:
         np_arr = np.clip(np_arr, 0, 255).astype(np.uint8)
     resized = _resize_mask_arr(np_arr, image_size)
-    return resized.astype(np.int32)
+    mask = resized.astype(np.int32)
+    # Dataset encodes classes starting at 1; shift to zero-based indices for Optax
+    mask = np.where(mask > 0, mask - 1, 0)
+    return mask
 
 
 def _load_from_torchvision(image_size: Tuple[int, int]):
