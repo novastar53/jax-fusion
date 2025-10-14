@@ -87,7 +87,7 @@ if __name__ == "__main__":
         optimizer.update(model, grads)
         return loss, model, optimizer
 
-    cfg = DataConfig(batch_size=16, num_epochs=1, shuffle=True, as_chw=False)
+    cfg = DataConfig(batch_size=64, num_epochs=10, shuffle=True, as_chw=False)
     iterator = make_dataloader("train", cfg)
     for images, labels, masks in iterator:
         loss, model, optimizer = step_fn(model, optimizer, images, masks)
