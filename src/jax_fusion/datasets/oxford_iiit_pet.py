@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterator, Optional, Tuple
 
 import numpy as np
@@ -339,8 +340,14 @@ def visualize_batch(
     max_display: int = 16,
     mask_alpha: float = 0.4,
     mask_cmap: str = "magma",
+    save_path: str | Path | None = None,
+    show: bool = True,
 ):
-    """Display a grid of images with optional class labels and segmentation overlays."""
+    """Display a grid of images with optional class labels and segmentation overlays.
+
+    If ``save_path`` is provided the figure is written to disk; set ``show`` to False in
+    headless environments.
+    """
     imgs = np.array(images)
     if imgs.ndim == 4 and imgs.shape[1] in (1, 3):
         imgs = imgs.transpose(0, 2, 3, 1)
@@ -357,6 +364,8 @@ def visualize_batch(
             mask_arr = mask_arr[:, 0, :, :]
         if mask_arr.ndim == 4 and mask_arr.shape[-1] == 1:
             mask_arr = mask_arr.squeeze(-1)
+
+    save_path_obj = Path(save_path) if save_path is not None else None
 
     n = min(imgs.shape[0], max_display)
     if n == 0:
@@ -395,7 +404,15 @@ def visualize_batch(
         axes[j].axis("off")
 
     plt.tight_layout()
-    plt.show()
+
+    if save_path_obj is not None:
+        save_path_obj.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path_obj, bbox_inches="tight")
+
+    if show:
+        plt.show()
+
+    plt.close(fig)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -87,8 +88,53 @@ if __name__ == "__main__":
         optimizer.update(model, grads)
         return loss, model, optimizer
 
-    cfg = DataConfig(batch_size=64, num_epochs=10, shuffle=True, as_chw=False)
+    cfg = DataConfig(batch_size=128, num_epochs=50, shuffle=True, as_chw=False)
     iterator = make_dataloader("train", cfg)
+    step = 0
     for images, labels, masks in iterator:
         loss, model, optimizer = step_fn(model, optimizer, images, masks)
-        print(loss)
+        step += 1
+        if step % 10 == 0:
+            print(f"Step {step}: loss={float(loss):.4f}")
+
+    print("Training complete. Sampling test batch for visualization...")
+
+    test_cfg = DataConfig(batch_size=8, num_epochs=1, shuffle=False, as_chw=False)
+    test_iterator = make_dataloader("test", test_cfg)
+    test_images, test_labels, test_masks = next(test_iterator)
+
+    logits = model(test_images)
+    pred_masks = jnp.argmax(logits, axis=-1).astype(jnp.int32)
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    output_dir = Path("outputs") / "unet"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pred_path = output_dir / f"predicted_overlays_{timestamp}.png"
+
+    print("Predicted segmentation overlays:")
+    visualize_batch(
+        test_images,
+        labels=test_labels,
+        masks=pred_masks,
+        max_display=8,
+        mask_alpha=0.5,
+        mask_cmap="viridis",
+        save_path=pred_path,
+        show=False,
+    )
+    print(f"Saved predicted overlays to {pred_path}")
+
+    if test_masks is not None:
+        gt_path = output_dir / f"ground_truth_overlays_{timestamp}.png"
+        print("Ground truth segmentation overlays:")
+        visualize_batch(
+            test_images,
+            labels=test_labels,
+            masks=test_masks,
+            max_display=8,
+            mask_alpha=0.5,
+            mask_cmap="magma",
+            save_path=gt_path,
+            show=False,
+        )
+        print(f"Saved ground truth overlays to {gt_path}")
