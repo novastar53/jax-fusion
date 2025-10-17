@@ -16,35 +16,49 @@ from jax_fusion.modules.pos_emb import PosEmbedding
 class ConvBlock(nnx.Module):
     def __init__(self, in_channels, out_channels, *, rngs):
         self.time_mlp = nnx.Linear(in_channels, in_channels * 2, rngs=rngs)
-        self.gn = nnx.GroupNorm(out_channels, num_groups=8, rngs=rngs)
         self.conv1 = nnx.Conv(in_channels, out_channels, kernel_size=(3, 3), padding='SAME', rngs=rngs)
+        self.gn1 = nnx.GroupNorm(out_channels, num_groups=8, rngs=rngs)
+        self.conv2 = nnx.Conv(out_channels, out_channels, kernel_size=(3, 3), padding='SAME', rngs=rngs)
+        self.gn2 = nnx.GroupNorm(out_channels, num_groups=8, rngs=rngs)
 
     def __call__(self, x):
         #t = nnx.relu(self.time_mlp(x))
         #scale, shift = jnp.split(t, 2, axis=1)
         x = self.conv1(x)
-        x = self.gn(x)
+        x = self.gn1(x)
+        x = nnx.relu(x)
+        x = self.conv2(x)
+        x = self.gn2(x)
+        x = nnx.relu(x)
         return x
+
 
 class Down(nnx.Module):
     def __init__(self, in_channels, out_channels, *, rngs):
+        self.down = nnx.Conv(in_channels, in_channels, kernel_size=(2, 2), strides=(2, 2), rngs=rngs)
         self.block = ConvBlock(in_channels, out_channels, rngs=rngs)
     
     def __call__(self, x, t):
-        x = nnx.max_pool(x, window_shape=(2, 2), strides=(2, 2))
+        #x = nnx.max_pool(x, window_shape=(2, 2), strides=(2, 2))
+        x = self.down(x)
         x = self.block(x)
         return x
+
+
 class Up(nnx.Module):
     def __init__(self, in_channels, skip_channels, out_channels, *, rngs):
-        self.up = nnx.ConvTranspose(in_channels, out_channels, kernel_size=(2, 2), strides=(2, 2), rngs=rngs)
-        self.block = ConvBlock(out_channels+skip_channels, out_channels, rngs=rngs)
+        self.up = nnx.ConvTranspose(in_channels, in_channels, kernel_size=(2, 2), strides=(2, 2), rngs=rngs)
+        self.block = ConvBlock(in_channels+skip_channels, out_channels, rngs=rngs)
     
     def __call__(self, x, skip, t):
+        #x = jax.image.resize(x, shape=(x.shape[0], x.shape[1]*2, x.shape[2]*2, x.shape[3]), method="linear")
         x = self.up(x)
-        skip = jax.image.resize(skip, x.shape, method="linear")
+        skip = jax.image.resize(skip, shape=(x.shape[0], x.shape[1], x.shape[2], skip.shape[3]), method="linear")
         x = jnp.concatenate([x, skip], axis=-1)
         x = self.block(x)
         return x
+
+
 class UNet(nnx.Module):
     def __init__(self, in_channels, num_classes, *, rngs):
         self.time_mlp = nnx.Sequential(
