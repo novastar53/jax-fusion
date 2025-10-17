@@ -1,3 +1,5 @@
+from functools import partial
+
 from datetime import datetime
 from pathlib import Path
 
@@ -8,22 +10,27 @@ import optax
 
 
 from jax_fusion.datasets.oxford_iiit_pet import DataConfig, make_dataloader, visualize_batch
+from jax_fusion.modules.pos_emb import PosEmbedding
 
 
 class ConvBlock(nnx.Module):
     def __init__(self, in_channels, out_channels, *, rngs):
+        self.time_mlp = nnx.Linear(in_channels, in_channels * 2, rngs=rngs)
+        self.gn = nnx.GroupNorm(out_channels, num_groups=8, rngs=rngs)
         self.conv1 = nnx.Conv(in_channels, out_channels, kernel_size=(3, 3), padding='SAME', rngs=rngs)
-        self.conv2 = nnx.Conv(out_channels, out_channels, kernel_size=(3, 3), padding='SAME', rngs=rngs)
 
     def __call__(self, x):
-        x = nnx.relu(self.conv1(x))
-        x = nnx.relu(self.conv2(x))
+        #t = nnx.relu(self.time_mlp(x))
+        #scale, shift = jnp.split(t, 2, axis=1)
+        x = self.conv1(x)
+        x = self.gn(x)
         return x
+
 class Down(nnx.Module):
     def __init__(self, in_channels, out_channels, *, rngs):
         self.block = ConvBlock(in_channels, out_channels, rngs=rngs)
     
-    def __call__(self, x):
+    def __call__(self, x, t):
         x = nnx.max_pool(x, window_shape=(2, 2), strides=(2, 2))
         x = self.block(x)
         return x
@@ -32,7 +39,7 @@ class Up(nnx.Module):
         self.up = nnx.ConvTranspose(in_channels, out_channels, kernel_size=(2, 2), strides=(2, 2), rngs=rngs)
         self.block = ConvBlock(out_channels+skip_channels, out_channels, rngs=rngs)
     
-    def __call__(self, x, skip):
+    def __call__(self, x, skip, t):
         x = self.up(x)
         skip = jax.image.resize(skip, x.shape, method="linear")
         x = jnp.concatenate([x, skip], axis=-1)
@@ -40,6 +47,12 @@ class Up(nnx.Module):
         return x
 class UNet(nnx.Module):
     def __init__(self, in_channels, num_classes, *, rngs):
+        self.time_mlp = nnx.Sequential(
+            PosEmbedding(64),
+            nnx.Linear(64, 64*4, rngs=rngs),
+            partial(nnx.gelu, approximate=True),
+            nnx.Linear(64*4, 64*4, rngs=rngs)
+        )
         self.enc1 = Down(in_channels, 64, rngs=rngs)
         self.enc2 = Down(64, 128, rngs=rngs) 
         self.enc3 = Down(128, 256, rngs=rngs)
@@ -54,18 +67,21 @@ class UNet(nnx.Module):
 
         self.out_conv = nnx.Conv(64, num_classes, kernel_size=(1, 1), rngs=rngs)
 
-    def __call__(self, x):
-        e1 = self.enc1(x) # 1, 112, 112, 64
-        e2 = self.enc2(e1) # 1, 56, 56, 128
-        e3 = self.enc3(e2) # 1, 28, 28, 256
-        e4 = self.enc4(e3) # 1, 14, 14, 512
+    def __call__(self, x, time=None):
+        t = None
+        if time:
+            t = self.time_mlp(time)
+        e1 = self.enc1(x, t) # 1, 112, 112, 64
+        e2 = self.enc2(e1, t) # 1, 56, 56, 128
+        e3 = self.enc3(e2, t) # 1, 28, 28, 256
+        e4 = self.enc4(e3, t) # 1, 14, 14, 512
         
         mid = self.middle(e4) # 1, 14, 14, 1024
 
-        d1 = self.up1(mid, e4) # 1, 28, 28, 256
-        d2 = self.up2(d1, e3) # 1, 56, 56, 128
-        d3 = self.up3(d2, e2) # 1, 112, 112, 64
-        d4 = self.up4(d3, e1) # 1, 224, 224, 64
+        d1 = self.up1(mid, e4, t) # 1, 28, 28, 256
+        d2 = self.up2(d1, e3, t) # 1, 56, 56, 128
+        d3 = self.up3(d2, e2, t) # 1, 112, 112, 64
+        d4 = self.up4(d3, e1, t) # 1, 224, 224, 64
 
         logits = self.out_conv(d4) # 1, 224, 224, 3
         return logits
