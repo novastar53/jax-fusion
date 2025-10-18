@@ -35,22 +35,33 @@ def forward_diffusion(x0, betas, key):
         x_prev = x_next
     return xts
 
-# Plot multiple images
+# Plot multiple images (supports both single images and batches)
 def show_images(images, titles=None, cols=5):
-    rows = (len(images) + cols - 1) // cols
+    if isinstance(images, (list, tuple)):
+        imgs = [np.array(img) for img in images]
+    else:
+        np_imgs = np.asarray(images)
+        if np_imgs.ndim == 2:
+            imgs = [np_imgs]
+        else:
+            imgs = [np_imgs[i] for i in range(np_imgs.shape[0])]
+
+    rows = (len(imgs) + cols - 1) // cols
     plt.figure(figsize=(cols * 2, rows * 2))
-    for i, img in enumerate(images):
+    for i, img in enumerate(imgs):
+        if img.ndim == 3 and img.shape[-1] == 1:
+            img = img[..., 0]
         plt.subplot(rows, cols, i + 1)
-        plt.imshow(np.clip(np.array(img), 0, 1), cmap='gray')
-        if titles: plt.title(titles[i])
+        plt.imshow(np.clip(img, 0, 1), cmap='gray' if img.ndim == 2 else None)
+        if titles:
+            plt.title(titles[i])
         plt.axis('off')
     plt.tight_layout()
     plt.show()
 
 # === Main ===
 if __name__ == "__main__":
-    x0 = imgs[0]  # Use the first image from the dataloader
-    x0 = x0.astype(jnp.float32) / 255.0  # Ensure it's in [0,1] range
+    x0 = imgs.astype(jnp.float32) / 255.0  # Normalize full batch to [0,1]
 
     T = 10  # number of diffusion steps
     betas = jnp.linspace(1e-5, 0.001, T)
@@ -60,5 +71,9 @@ if __name__ == "__main__":
 
     # Show selected steps
     selected = [0, 1, 2, 3, 5, 7, 9, T]
-    show_images([xts[t] for t in selected],
-                titles=[f"t={t}" for t in selected])
+    for t in selected:
+        show_images(
+            xts[t],
+            titles=[f"t={t}, idx={i}" for i in range(xts[t].shape[0])],
+            cols=4,
+        )
